@@ -1,0 +1,297 @@
+// Prisma Schema para FeastFlow B2B SaaS Platform
+// Arquitetura Multi-Tenant com Row Level Security (RLS)
+// Região: São José dos Pinhais / Curitiba - PR
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// MODELO RAIZ: TENANT (Inquilino - Salão de Festas)
+// ============================================================================
+// Tabela mestre que representa cada salão de festas cliente do SaaS
+// IMPORTANTE: Esta tabela NÃO possui tenantId pois é a raiz da hierarquia
+
+model Tenant {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(255)
+  email     String   @unique @db.VarChar(255)
+  phone     String?  @db.VarChar(20)
+  document  String   @unique @db.VarChar(18) // CNPJ
+  address   String?  @db.Text
+  city      String   @default("São José dos Pinhais") @db.VarChar(100)
+  state     String   @default("PR") @db.VarChar(2)
+  zipCode   String?  @db.VarChar(9)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relacionamentos
+  users         User[]
+  spaces        Space[]
+  eventCatalogs EventCatalog[]
+  budgets       Budget[]
+  customers     Customer[]
+
+  @@map("Tenant")
+}
+
+// ============================================================================
+// MODELO: USER (Usuários do Sistema)
+// ============================================================================
+// Administradores e funcionários vinculados ao Tenant
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @db.VarChar(255)
+  name         String   @db.VarChar(255)
+  role         UserRole @default(OPERATOR)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy: Injeção automática via RLS
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([email])
+  @@map("User")
+}
+
+enum UserRole {
+  ADMIN    // Administrador completo do salão
+  OPERATOR // Operador que gerencia orçamentos e reservas
+  VIEWER   // Visualizador apenas (relatórios)
+
+  @@map("UserRole")
+}
+
+// ============================================================================
+// MODELO: SPACE (Espaços Físicos do Salão)
+// ============================================================================
+// Representa os diferentes ambientes/espaços disponíveis para locação
+
+model Space {
+  id          Int     @id @default(autoincrement())
+  name        String  @db.VarChar(255) // Ex: "Salão Principal", "Jardim Lateral"
+  description String? @db.Text
+  capacity    Int // Capacidade máxima de pessoas
+  isActive    Boolean @default(true)
+
+  // Precificação com precisão decimal obrigatória
+  basePrice Decimal @db.Decimal(19, 4) // Valor base de locação
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relacionamentos
+  reservations Reservation[]
+
+  @@index([tenantId])
+  @@map("Space")
+}
+
+// ============================================================================
+// MODELO: EVENT CATALOG (Catálogo de Tipos de Eventos)
+// ============================================================================
+// Define categorias de eventos e suas características tributárias
+
+model EventCatalog {
+  id          Int     @id @default(autoincrement())
+  name        String  @db.VarChar(255) // Ex: "Casamento", "Feira Comercial"
+  description String? @db.Text
+
+  // CRUCIAL: Determina se o evento qualifica para alíquota reduzida de ISS
+  // TRUE = Redução para 2% (congressos, feiras, shows, bailes culturais)
+  // FALSE = Alíquota padrão de 5%
+  qualifiesForReducedTax Boolean @default(false)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relacionamentos
+  budgets Budget[]
+
+  @@index([tenantId])
+  @@map("EventCatalog")
+}
+
+// ============================================================================
+// MODELO: CUSTOMER (Clientes Finais)
+// ============================================================================
+// Contratantes dos eventos (clientes dos salões)
+
+model Customer {
+  id        Int     @id @default(autoincrement())
+  name      String  @db.VarChar(255)
+  email     String  @db.VarChar(255)
+  phone     String? @db.VarChar(20)
+  document  String? @db.VarChar(18) // CPF ou CNPJ
+  address   String? @db.Text
+  notes     String? @db.Text
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relacionamentos
+  budgets Budget[]
+
+  @@index([tenantId])
+  @@index([email])
+  @@map("Customer")
+}
+
+// ============================================================================
+// MODELO: BUDGET (Orçamento)
+// ============================================================================
+// Núcleo financeiro: cotações e contratos de eventos
+
+model Budget {
+  id          Int          @id @default(autoincrement())
+  budgetCode  String       @unique @db.VarChar(50) // Código sequencial do orçamento
+  status      BudgetStatus @default(DRAFT)
+  eventDate   DateTime     @db.Date
+  guestCount  Int // Número estimado de convidados
+  description String?      @db.Text
+  notes       String?      @db.Text
+
+  // Valores Financeiros - DECIMAL(19,4) para precisão absoluta
+  subtotal     Decimal  @db.Decimal(19, 4) // Soma dos itens antes de impostos
+  discountRate Decimal  @default(0) @db.Decimal(5, 4) // Taxa de desconto (ex: 0.1000 = 10%)
+  taxRate      Decimal  @db.Decimal(5, 4) // Alíquota ISS aplicada (0.0200 ou 0.0500)
+  taxAmount    Decimal  @db.Decimal(19, 4) // Valor calculado do imposto
+  totalAmount  Decimal  @db.Decimal(19, 4) // Valor final do orçamento
+  
+  // SNAPSHOT JSONB - Imutabilidade Contratual (Padrão Snapshot Pattern)
+  // Congela os dados no momento da aprovação para auditoria
+  snapshot Json? @db.JsonB
+
+  approvedAt DateTime? @db.Timestamptz(6)
+  rejectedAt DateTime? @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relacionamentos
+  customerId     Int
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  eventCatalogId Int
+  eventCatalog   EventCatalog @relation(fields: [eventCatalogId], references: [id])
+
+  reservations Reservation[]
+  budgetItems  BudgetItem[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([eventDate])
+  @@index([budgetCode])
+  @@map("Budget")
+}
+
+enum BudgetStatus {
+  DRAFT    // Rascunho em construção
+  SENT     // Enviado ao cliente
+  APPROVED // Aprovado e confirmado
+  REJECTED // Rejeitado pelo cliente
+  CANCELED // Cancelado
+
+  @@map("BudgetStatus")
+}
+
+// ============================================================================
+// MODELO: BUDGET ITEM (Itens do Orçamento)
+// ============================================================================
+// Linhas detalhadas do orçamento (serviços, produtos, espaços)
+
+model BudgetItem {
+  id          Int     @id @default(autoincrement())
+  description String  @db.VarChar(255)
+  quantity    Decimal @db.Decimal(10, 2)
+  unitPrice   Decimal @db.Decimal(19, 4)
+  totalPrice  Decimal @db.Decimal(19, 4) // quantity * unitPrice
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+
+  // Relacionamento
+  budgetId Int
+  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([budgetId])
+  @@map("BudgetItem")
+}
+
+// ============================================================================
+// MODELO: RESERVATION (Reserva de Espaço/Data)
+// ============================================================================
+// CRÍTICO: Controle de concorrência com OCC via campo 'version'
+
+model Reservation {
+  id        Int               @id @default(autoincrement())
+  eventDate DateTime          @db.Date
+  status    ReservationStatus @default(PENDING)
+  notes     String?           @db.Text
+
+  // CONTROLE DE CONCORRÊNCIA OTIMISTA (OCC)
+  // Campo obrigatório para evitar Double Booking
+  version Int @default(0)
+
+  confirmedAt DateTime? @db.Timestamptz(6)
+  canceledAt  DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  // Multi-Tenancy
+  tenantId Int @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::int"))
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relacionamentos
+  spaceId  Int
+  space    Space  @relation(fields: [spaceId], references: [id])
+  budgetId Int
+  budget   Budget @relation(fields: [budgetId], references: [id])
+
+  // Constraint: Não pode haver duas reservas confirmadas para mesmo espaço/data
+  @@unique([spaceId, eventDate, tenantId], name: "unique_space_date_reservation")
+  @@index([tenantId])
+  @@index([status])
+  @@index([eventDate])
+  @@map("Reservation")
+}
+
+enum ReservationStatus {
+  PENDING   // Aguardando confirmação
+  CONFIRMED // Confirmada (data bloqueada)
+  CANCELED  // Cancelada
+
+  @@map("ReservationStatus")
+}
