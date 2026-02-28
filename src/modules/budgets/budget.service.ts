@@ -327,7 +327,7 @@ export class BudgetService {
       },
     });
 
-    return budgets.map((budget) => this.mapToResponseDto(budget));
+    return budgets.map((budget: any) => this.mapToResponseDto(budget));
   }
 
   /**

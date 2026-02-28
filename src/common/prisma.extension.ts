@@ -25,7 +25,7 @@ export function createPrismaExtension(prisma: PrismaClient) {
     query: {
       // Intercepta TODAS as operações em TODOS os modelos
       $allModels: {
-        async $allOperations({ operation, model, args, query }) {
+        async $allOperations({ operation, model, args, query }: { operation: string; model: string; args: any; query: (args: any) => Promise<any> }) {
           const contextManager = TenantContextManager.getInstance();
 
           // BYPASS: Permite operações sem contexto de tenant
@@ -44,12 +44,11 @@ export function createPrismaExtension(prisma: PrismaClient) {
 
           // EXECUÇÃO TRANSACIONAL COM INJEÇÃO DE CONTEXTO
           // Garante que set_config e a query rodam na mesma conexão
-          return prisma.$transaction(async (tx) => {
-            // 1. Define a variável de sessão PostgreSQL
+          return prisma.$transaction(async (tx: any) => {
+            // 1. Define a variável de sessão PostgreSQL usando query parametrizada
             // O TRUE (is_local) garante que a variável só existe nesta transação
-            await tx.$executeRawUnsafe(
-              `SELECT set_config('app.current_tenant_id', '${tenantId}', TRUE)`,
-            );
+            // Usamos $executeRaw com parâmetro para evitar injeção de SQL
+            await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${String(tenantId)}, TRUE)`;
 
             // 2. Executa a query original com RLS ativo
             // O PostgreSQL aplica automaticamente a política de isolamento
