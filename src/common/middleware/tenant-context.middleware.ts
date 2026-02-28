@@ -14,11 +14,6 @@ export class TenantContextMiddleware implements NestMiddleware {
       return next();
     }
 
-    // Also allow POST /tenants for registration
-    if (req.path === '/api/v1/tenants' && req.method === 'POST') {
-      return next();
-    }
-
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       throw new UnauthorizedException('Token de autenticação não fornecido');
