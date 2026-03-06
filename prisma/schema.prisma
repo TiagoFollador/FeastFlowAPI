@@ -1,0 +1,190 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum LocationType {
+  IN_HOUSE
+  OUT_HOUSE
+}
+
+enum EventNature {
+  PRIVADO
+  FEIRA
+  CONGRESSO
+}
+
+enum BudgetStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+}
+
+enum BudgetItemType {
+  STAFF
+  CATERING
+  PARTNER
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id               String           @id @default(uuid()) @db.Uuid
+  name             String
+  cnpj             String           @unique
+  global_margin    Decimal          @db.Decimal(19, 4)
+  created_at       DateTime         @default(now())
+
+  users            User[]
+  event_locations  EventLocation[]
+  partners         Partner[]
+  partner_services PartnerService[]
+  pricing_rules    PricingRule[]
+  staffing_rules   StaffingRule[]
+  budgets          Budget[]
+  budget_items     BudgetItem[]
+  budget_snapshots BudgetSnapshot[]
+
+  @@map("tenants")
+}
+
+model User {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenant_id     String   @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  role          String
+  email         String   @unique
+  password_hash String
+
+  tenant  Tenant   @relation(fields: [tenant_id], references: [id])
+  budgets Budget[]
+
+  @@map("users")
+}
+
+model EventLocation {
+  id                   String       @id @default(uuid()) @db.Uuid
+  tenant_id            String       @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  name                 String
+  type                 LocationType
+  capacity             Int
+  transport_multiplier Decimal      @db.Decimal(19, 4)
+
+  tenant  Tenant   @relation(fields: [tenant_id], references: [id])
+  budgets Budget[]
+
+  @@map("event_locations")
+}
+
+model Partner {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenant_id        String           @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  name             String
+  specialty        String
+
+  tenant           Tenant           @relation(fields: [tenant_id], references: [id])
+  partner_services PartnerService[]
+
+  @@map("partners")
+}
+
+model PartnerService {
+  id            String  @id @default(uuid()) @db.Uuid
+  partner_id    String  @db.Uuid
+  tenant_id     String  @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  name          String
+  base_cost     Decimal @db.Decimal(19, 4)
+  markup_margin Decimal @db.Decimal(19, 4)
+
+  partner Partner @relation(fields: [partner_id], references: [id])
+  tenant  Tenant  @relation(fields: [tenant_id], references: [id])
+
+  @@map("partner_services")
+}
+
+model PricingRule {
+  id         String  @id @default(uuid()) @db.Uuid
+  tenant_id  String  @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  rule_name  String
+  multiplier Decimal @db.Decimal(19, 4)
+
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@map("pricing_rules")
+}
+
+model StaffingRule {
+  id               String  @id @default(uuid()) @db.Uuid
+  tenant_id        String  @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  role             String
+  guest_ratio      Int
+  base_hourly_rate Decimal @db.Decimal(19, 4)
+
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@map("staffing_rules")
+}
+
+model Budget {
+  id            String       @id @default(uuid()) @db.Uuid
+  tenant_id     String       @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  user_id       String       @db.Uuid
+  location_id   String       @db.Uuid
+  event_nature  EventNature
+  guest_count   Int
+  total_cost    Decimal      @db.Decimal(19, 4)
+  final_price   Decimal      @db.Decimal(19, 4)
+  status        BudgetStatus @default(DRAFT)
+  version_token Int          @default(1)
+  created_at    DateTime     @default(now())
+
+  tenant    Tenant         @relation(fields: [tenant_id], references: [id])
+  user      User           @relation(fields: [user_id], references: [id])
+  location  EventLocation  @relation(fields: [location_id], references: [id])
+  items     BudgetItem[]
+  snapshots BudgetSnapshot[]
+
+  @@map("budgets")
+}
+
+model BudgetItem {
+  id              String         @id @default(uuid()) @db.Uuid
+  budget_id       String         @db.Uuid
+  tenant_id       String         @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  item_type       BudgetItemType
+  reference_id    String         @db.Uuid
+  quantity        Int
+  unit_cost       Decimal        @db.Decimal(19, 4)
+  applied_markup  Decimal        @db.Decimal(19, 4)
+  final_row_price Decimal        @db.Decimal(19, 4)
+
+  budget Budget @relation(fields: [budget_id], references: [id])
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@map("budget_items")
+}
+
+model BudgetSnapshot {
+  id         String   @id @default(uuid()) @db.Uuid
+  budget_id  String   @db.Uuid
+  tenant_id  String   @default(dbgenerated("(current_setting('app.current_tenant_id'::text))::uuid")) @db.Uuid
+  payload    Json
+  created_at DateTime @default(now())
+
+  budget Budget @relation(fields: [budget_id], references: [id])
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@map("budget_snapshots")
+}
+
